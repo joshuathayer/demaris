@@ -1,0 +1,5 @@
+an extensible world
+
+run: 
+
+    clojure -A:cider-clj
