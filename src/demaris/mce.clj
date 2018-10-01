@@ -92,7 +92,7 @@
 
 (defn evl [exp env]
   (cond
-    (self-eval? exp) (exp env)
+    (self-eval? exp) exp
     (symbol? exp)    (lookup-symbol exp env)
     (lambda? exp)    (make-procedure (nth exp 1) (nth exp 2) env)
     (let? exp)       (handle-let (nth exp 1) (nth exp 2) env)
