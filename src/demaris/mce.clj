@@ -61,6 +61,7 @@
 (defn let? [exp] (tagged-list? exp 'let))
 (defn define? [exp] (tagged-list? exp 'define))
 (defn map-meta? [exp] (tagged-list? exp 'map))
+(defn do? [exp] (tagged-list? exp 'do))
 (defn application? [exp] (list? exp))
 
 ;; =====
@@ -122,7 +123,9 @@
                                                          (first (evl v env))))
                                       {} exp)
                            env)
+    (do?        exp) (evl-seq exp env)
 
+    ;; (map ...)
     (map-meta?  exp) (handle-map (first (evl (nth exp 1) env))
                                  (first (evl (nth exp 2) env)))
 
@@ -141,7 +144,11 @@
 
 (comment
 
-  (evl '(map (lambda [x] (+ x 2)) [1 2 3]) (setup-env))
+  (evl '(map
+         (lambda [x]
+                 (do (print "hi") (+ x 2)))
+         [1 2 3])
+       (setup-env))
 
   (evl-file "/home/user/projects/dem/src/demaris/feh.dsc")
 
