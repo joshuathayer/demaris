@@ -3,7 +3,7 @@
    [clojure.tools.trace :as trace]))
 
 
-(declare evl)
+(declare evl evl-seq)
 
 ;; ===== env ======
 
@@ -58,7 +58,7 @@
 
 (defn lambda? [exp] (tagged-list? exp 'lambda))
 (defn let? [exp] (tagged-list? exp 'let))
-
+(defn define? [exp] (tagged-list? exp 'define))
 (defn application? [exp] (list? exp))
 
 ;; =====
@@ -69,12 +69,19 @@
    :body      body
    :env       env})
 
-(defn handle-let [let-forms body env]
+(defn handle-let [let-forms exps env]
   (let [ext-env  (reduce (fn [e [let-sym let-body]]
-                           (add-to-env e let-sym (evl let-body e)))
+                           (add-to-env e let-sym (first (evl let-body e))))
                          (enclose-env (make-env) env)
                          (partition 2 let-forms))]
-    (evl body ext-env)))
+
+    ;; (first (evl body ext-env))
+    (first (evl-seq exps ext-env))
+    ))
+
+(defn handle-define [param body env]
+  (let [[res new-env] (evl body env)]
+    (add-to-env new-env param res)))
 
 ;; ===== apply =====
 (defn app [procedure args]
@@ -90,32 +97,60 @@
 
 ;; ===== eval =====
 
+(defn evl-seq [exps env]
+  (reduce
+   (fn [[res current-env] exp]
+     (evl exp current-env))
+   [nil env]
+   exps))
+
 (defn evl [exp env]
   (cond
     (self-eval? exp) (list exp env)
     (symbol? exp)    (list (lookup-symbol exp env) env)
     (lambda? exp)    (list (make-procedure (nth exp 1) (nth exp 2) env) env)
-    (let? exp)       (list (handle-let (nth exp 1) (nth exp 2) env) env)
-    (vector? exp)    (list (vec (map #(evl % env) exp)) env)
-    (map? exp)       (list (reduce-kv (fn [m k v] (assoc m (evl k env) (evl v env))) {} exp)
+    (let? exp)       (list (handle-let (nth exp 1) (rest (rest exp)) env) env)
+    (vector? exp)    (list (vec (map #(first (evl % env)) exp)) env)
+    (define? exp)    (list nil (handle-define (nth exp 1) (nth exp 2) env))
+    (map? exp)       (list (reduce-kv (fn [m k v] (assoc m (first (evl k env))
+                                                         (first (evl v env))))
+                                      {} exp)
                            env)
 
     ;; is this otherwise a list?
-    (application? exp) (app (first (evl (first exp) env))
-                            (map #(evl % env) (rest exp)))
+    (application? exp) (list (app (first (evl (first exp) env))
+                                  (map #(first (evl % env)) (rest exp))) env)
 
     ))
 
 
 
 (comment
-  (first (evl 1 (setup-env)))
 
-  (first (evl '+ (setup-env)))
+  (second (evl-seq '((define x 1) (define y 2) (+ x y)) (setup-env)))
+
+  (evl-seq
+   '((define plus
+       (lambda [x] (+ x 2)))
+
+     (define minus
+       (lambda [x] (- x 8)))
+
+     (minus (plus 16)))
+   (setup-env))
+
+  (evl 1 (setup-env))
+
+  (evl '+ (setup-env))
+
+  (def new-env (second (evl '(define x 99) (setup-env))))
+
+  (evl 'x new-env)
+
+  (evl '(+ x 3) new-env)
 
   (evl '(lambda [x] x) (setup-env))
   (evl '((lambda [x] x) 1) (setup-env))
-
 
   (evl '(cons :a '()) (setup-env))
   (evl '(print "hello") (setup-env))
@@ -126,14 +161,15 @@
 
   (evl '(let [x 1 b 2] x) (setup-env))
 
-
-  (evl '(let [x 1 b (+ x 9)] (+ x b)) (setup-env))
-
-  (evl '(let [a {:a (+ 2 9)}] (get a :a)) (setup-env))
+  (evl '[1 2 3] (setup-env))
 
   (evl '[1 2 3 :a (+ 3 4)] (setup-env))
 
+  (first (evl '(let [x 1 b (+ x 9)] (+ x b) (- x b)) (setup-env)))
+  (first (evl '(let [a {:a (+ 2 9)}] (get a :a)) (setup-env)))
+
   (evl '{:a 1 :b (+ 2 3)} (setup-env))
+  (first (evl '{:a 1 :b (+ 2 3)} (setup-env)))
 
   (evl '(get {:a 1 :b (+ 2 3)} :b) (setup-env))
 
