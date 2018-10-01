@@ -1,9 +1,11 @@
 (ns damaris.mce
   (:require
-   [clojure.tools.trace :as trace]))
+   [clojure.tools.trace :as trace]
+   [clojure.java.io :as io]
+   [clojure.edn :as edn]))
 
 
-(declare evl evl-seq)
+(declare evl evl-seq handle-map)
 
 ;; ===== env ======
 
@@ -15,15 +17,14 @@
         'third #(nth % 2)
         'get get
         'print println
-        'cons cons
-        ))
+        'cons cons))
 
 (defn make-primitive-procedure-object [p]
   {:proc-type :primitive
    :proc      p})
 
 (defn make-env []
-  {:symbols {}
+  {:symbols   {}
    :enclosing nil})
 
 (defn add-to-env [env sym val]
@@ -59,6 +60,7 @@
 (defn lambda? [exp] (tagged-list? exp 'lambda))
 (defn let? [exp] (tagged-list? exp 'let))
 (defn define? [exp] (tagged-list? exp 'define))
+(defn map-meta? [exp] (tagged-list? exp 'map))
 (defn application? [exp] (list? exp))
 
 ;; =====
@@ -74,10 +76,14 @@
                            (add-to-env e let-sym (first (evl let-body e))))
                          (enclose-env (make-env) env)
                          (partition 2 let-forms))]
+    (first (evl-seq exps ext-env))))
 
-    ;; (first (evl body ext-env))
-    (first (evl-seq exps ext-env))
-    ))
+
+(defn handle-map
+  [f s]
+  (if (empty? s) '()
+      (cons (app f [(first s)])
+            (handle-map f (rest s)))))
 
 (defn handle-define [param body env]
   (let [[res new-env] (evl body env)]
@@ -107,15 +113,18 @@
 (defn evl [exp env]
   (cond
     (self-eval? exp) (list exp env)
-    (symbol? exp)    (list (lookup-symbol exp env) env)
-    (lambda? exp)    (list (make-procedure (nth exp 1) (nth exp 2) env) env)
-    (let? exp)       (list (handle-let (nth exp 1) (rest (rest exp)) env) env)
-    (vector? exp)    (list (vec (map #(first (evl % env)) exp)) env)
-    (define? exp)    (list nil (handle-define (nth exp 1) (nth exp 2) env))
-    (map? exp)       (list (reduce-kv (fn [m k v] (assoc m (first (evl k env))
+    (symbol?    exp) (list (lookup-symbol exp env) env)
+    (lambda?    exp) (list (make-procedure (nth exp 1) (nth exp 2) env) env)
+    (let?       exp) (list (handle-let (nth exp 1) (rest (rest exp)) env) env)
+    (vector?    exp) (list (vec (map #(first (evl % env)) exp)) env)
+    (define?    exp) (list nil (handle-define (nth exp 1) (nth exp 2) env))
+    (map?       exp) (list (reduce-kv (fn [m k v] (assoc m (first (evl k env))
                                                          (first (evl v env))))
                                       {} exp)
                            env)
+
+    (map-meta?  exp) (handle-map (first (evl (nth exp 1) env))
+                                 (first (evl (nth exp 2) env)))
 
     ;; is this otherwise a list?
     (application? exp) (list (app (first (evl (first exp) env))
@@ -124,10 +133,19 @@
     ))
 
 
+(defn evl-file [fn]
+  (with-open [in (java.io.PushbackReader. (clojure.java.io/reader fn))]
+    (let [edn-seq (repeatedly (partial edn/read {:eof :eof} in))]
+      (evl-seq (take-while (partial not= :eof) edn-seq) (setup-env)))))
+
 
 (comment
 
-  (second (evl-seq '((define x 1) (define y 2) (+ x y)) (setup-env)))
+  (evl '(map (lambda [x] (+ x 2)) [1 2 3]) (setup-env))
+
+  (evl-file "/home/user/projects/dem/src/demaris/feh.dsc")
+
+  (first (evl-seq '((define x 1) (define y 2) (+ x y)) (setup-env)))
 
   (evl-seq
    '((define plus
