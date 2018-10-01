@@ -80,27 +80,28 @@
 (defn app [procedure args]
   (case (:proc-type procedure)
     :primitive (apply (:proc procedure) args)
-    :compound  (evl (:body procedure)
-                    (enclose-env
-                     (reduce (fn [e [s v]] (add-to-env e s v))
-                             (make-env)
-                             (map vector (:params procedure) args))
-                     (:env procedure)))
+    :compound  (first (evl (:body procedure)
+                           (enclose-env
+                            (reduce (fn [e [s v]] (add-to-env e s v))
+                                    (make-env)
+                                    (map vector (:params procedure) args))
+                            (:env procedure))))
     nil))
 
 ;; ===== eval =====
 
 (defn evl [exp env]
   (cond
-    (self-eval? exp) (exp env)
-    (symbol? exp)    (lookup-symbol exp env)
-    (lambda? exp)    (make-procedure (nth exp 1) (nth exp 2) env)
-    (let? exp)       (handle-let (nth exp 1) (nth exp 2) env)
-    (vector? exp)    (vec (map #(evl % env) exp))
-    (map? exp)       (reduce-kv (fn [m k v] (assoc m (evl k env) (evl v env))) {} exp)
+    (self-eval? exp) (list exp env)
+    (symbol? exp)    (list (lookup-symbol exp env) env)
+    (lambda? exp)    (list (make-procedure (nth exp 1) (nth exp 2) env) env)
+    (let? exp)       (list (handle-let (nth exp 1) (nth exp 2) env) env)
+    (vector? exp)    (list (vec (map #(evl % env) exp)) env)
+    (map? exp)       (list (reduce-kv (fn [m k v] (assoc m (evl k env) (evl v env))) {} exp)
+                           env)
 
     ;; is this otherwise a list?
-    (application? exp) (app (evl (first exp) env)
+    (application? exp) (app (first (evl (first exp) env))
                             (map #(evl % env) (rest exp)))
 
     ))
@@ -108,6 +109,13 @@
 
 
 (comment
+  (first (evl 1 (setup-env)))
+
+  (first (evl '+ (setup-env)))
+
+  (evl '(lambda [x] x) (setup-env))
+  (evl '((lambda [x] x) 1) (setup-env))
+
 
   (evl '(cons :a '()) (setup-env))
   (evl '(print "hello") (setup-env))
@@ -115,6 +123,9 @@
   (evl '((get {:hi (lambda [who] (print "hello" who))} :hi) "world") (setup-env))
 
   (evl '(let [x 1 b 2] (+ x b)) (setup-env))
+
+  (evl '(let [x 1 b 2] x) (setup-env))
+
 
   (evl '(let [x 1 b (+ x 9)] (+ x b)) (setup-env))
 
