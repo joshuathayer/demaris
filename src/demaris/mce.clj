@@ -66,17 +66,17 @@
 (defn let? [exp] (tagged-list? exp 'let))
 (defn define? [exp] (tagged-list? exp 'define))
 (defn map-meta? [exp] (tagged-list? exp 'map))
+(defn reduce? [exp] (tagged-list? exp 'reduce))
 (defn do? [exp] (tagged-list? exp 'do))
 (defn if? [exp] (tagged-list? exp 'if))
 (defn application? [exp] (list? exp))
 
 ;; =====
 
-(defn make-procedure [parameters body env]
+(defn make-procedure [parameters body]
   {:proc-type :compound
    :params    parameters
-   :body      body
-   :env       env})
+   :body      body})
 
 (defn handle-let [let-forms exps env]
   (let [ext-env  (reduce (fn [e [let-sym let-body]]
@@ -85,14 +85,26 @@
                          (partition 2 let-forms))]
     (first (evl-seq exps ext-env))))
 
-
+;; map f over items in s, using environment env. i don't think
+;; environment modifications in earlier applications should affect
+;; later applications
 (defn handle-map
-  [f s]
+  [f s env]
   (if (empty? s) '()
-      (cons (app f [(first s)])
-            (handle-map f (rest s)))))
+      (cons (app f [(first s)] env)
+            (handle-map f (rest s) env))))
 
-(trace/deftrace handle-define [param body env]
+(defn handle-reduce
+  [f i s env]
+  (if (empty? s)
+    i
+    (handle-reduce
+     f
+     (app f [i (first s)] env)
+     (rest s)
+     env)))
+
+(defn handle-define [param body env]
   (let [[res new-env] (evl body env)]
     (add-to-env new-env param res)))
 
@@ -102,7 +114,7 @@
     (evl f env)))
 
 ;; ===== apply =====
-(trace/deftrace app [procedure args]
+(defn app [procedure args env]
   (case (:proc-type procedure)
     :primitive (apply (:proc procedure) args)
     :compound  (first (evl (:body procedure)
@@ -110,7 +122,7 @@
                             (reduce (fn [e [s v]] (add-to-env e s v))
                                     (make-env)
                                     (map vector (:params procedure) args))
-                            (:env procedure))))
+                            env)))
     nil))
 
 ;; ===== eval =====
@@ -126,7 +138,7 @@
   (cond
     (self-eval? exp) (list exp env)
     (symbol?    exp) (list (lookup-symbol exp env) env)
-    (lambda?    exp) (list (make-procedure (nth exp 1) (nth exp 2) env) env)
+    (lambda?    exp) (list (make-procedure (nth exp 1) (nth exp 2)) env)
     (let?       exp) (list (handle-let (nth exp 1) (rest (rest exp)) env) env)
     (vector?    exp) (list (vec (map #(first (evl % env)) exp)) env)
     (define?    exp) (list nil (handle-define (nth exp 1) (nth exp 2) env))
@@ -139,12 +151,21 @@
 
     ;; (map ...)
     (map-meta?  exp) (list (handle-map (first (evl (nth exp 1) env))
-                                       (first (evl (nth exp 2) env)))
+                                       (first (evl (nth exp 2) env))
+                                       env)
+                           env)
+
+    (reduce? exp)    (list (handle-reduce (first (evl (nth exp 1) env))
+                                          (first (evl (nth exp 2) env))
+                                          (first (evl (nth exp 3) env))
+                                          env)
                            env)
 
     ;; is this otherwise a list?
     (application? exp) (list (app (first (evl (first exp) env))
-                                  (map #(first (evl % env)) (rest exp))) env)
+                                  (map #(first (evl % env)) (rest exp))
+                                  env)
+                             env)
 
     ))
 
@@ -164,6 +185,13 @@
          [1 2 3])
        (setup-env))
 
+  (evl '(reduce
+         (lambda [acc x]
+                 (+ acc x))
+         0
+         [1 2 3])
+       (setup-env))
+
   (evl-file "/home/user/projects/dem/src/demaris/feh.dsc")
 
   (first (evl-seq '((define x 1) (define y 2) (+ x y)) (setup-env)))
@@ -179,14 +207,13 @@
      (minus (plus 16)))
    (setup-env))
 
-  ;; this doesn't work!
   (evl-seq
    '((define fact
        (lambda [x]
                (if (= x 0)
                  1
                  (* x (fact (- x 1))))))
-     (fact 3))
+     (fact 12))
    (setup-env))
 
   (evl 1 (setup-env))
@@ -234,7 +261,7 @@
 
   (evl :a (setup-env))
 
-  (app (evl '+ (setup-env)) [1 2])
+  ;; (app (evl '+ (setup-env)) [1 2] (setup-env))
 
   (evl '(+ 1 2) (setup-env))
 
