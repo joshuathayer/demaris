@@ -5,13 +5,16 @@
    [clojure.edn :as edn]))
 
 
-(declare evl evl-seq handle-map)
+(declare evl evl-seq handle-map app)
 
 ;; ===== env ======
 
 (def primitive-procedures
   (list '+ +
         '- -
+        '/ /
+        '* *
+        '= =
         'first first
         'second second
         'third #(nth % 2)
@@ -55,6 +58,8 @@
         (string? exp) true
         (boolean? exp) true
         (keyword? exp) true
+        (nil? exp) true
+        (boolean? exp) true
         :else false))
 
 (defn lambda? [exp] (tagged-list? exp 'lambda))
@@ -62,6 +67,7 @@
 (defn define? [exp] (tagged-list? exp 'define))
 (defn map-meta? [exp] (tagged-list? exp 'map))
 (defn do? [exp] (tagged-list? exp 'do))
+(defn if? [exp] (tagged-list? exp 'if))
 (defn application? [exp] (list? exp))
 
 ;; =====
@@ -86,12 +92,17 @@
       (cons (app f [(first s)])
             (handle-map f (rest s)))))
 
-(defn handle-define [param body env]
+(trace/deftrace handle-define [param body env]
   (let [[res new-env] (evl body env)]
     (add-to-env new-env param res)))
 
+(defn handle-if [[test t f] env]
+  (if (first (evl test env))
+    (evl t env)
+    (evl f env)))
+
 ;; ===== apply =====
-(defn app [procedure args]
+(trace/deftrace app [procedure args]
   (case (:proc-type procedure)
     :primitive (apply (:proc procedure) args)
     :compound  (first (evl (:body procedure)
@@ -124,10 +135,12 @@
                                       {} exp)
                            env)
     (do?        exp) (evl-seq exp env)
+    (if?        exp) (handle-if (rest exp) env)
 
     ;; (map ...)
-    (map-meta?  exp) (handle-map (first (evl (nth exp 1) env))
-                                 (first (evl (nth exp 2) env)))
+    (map-meta?  exp) (list (handle-map (first (evl (nth exp 1) env))
+                                       (first (evl (nth exp 2) env)))
+                           env)
 
     ;; is this otherwise a list?
     (application? exp) (list (app (first (evl (first exp) env))
@@ -143,6 +156,7 @@
 
 
 (comment
+  (evl '(if false 1 2) (setup-env))
 
   (evl '(map
          (lambda [x]
@@ -153,6 +167,7 @@
   (evl-file "/home/user/projects/dem/src/demaris/feh.dsc")
 
   (first (evl-seq '((define x 1) (define y 2) (+ x y)) (setup-env)))
+  (first (evl '(do (define x 1) (define y 2) (+ x y)) (setup-env)))
 
   (evl-seq
    '((define plus
@@ -162,6 +177,16 @@
        (lambda [x] (- x 8)))
 
      (minus (plus 16)))
+   (setup-env))
+
+  ;; this doesn't work!
+  (evl-seq
+   '((define fact
+       (lambda [x]
+               (if (= x 0)
+                 1
+                 (* x (fact (- x 1))))))
+     (fact 3))
    (setup-env))
 
   (evl 1 (setup-env))
@@ -181,6 +206,7 @@
   (evl '(print "hello") (setup-env))
 
   (evl '((get {:hi (lambda [who] (print "hello" who))} :hi) "world") (setup-env))
+
 
   (evl '(let [x 1 b 2] (+ x b)) (setup-env))
 
